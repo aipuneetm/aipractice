@@ -22,26 +22,40 @@ HTML = r"""<!DOCTYPE html>
 <title>Snake</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body { margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+  html, body { height: 100%; }
+  body { margin: 0; height: 100vh; height: 100dvh; overflow: hidden;
+         box-sizing: border-box; padding: 12px; display: flex; flex-direction: column;
          align-items: center; justify-content: center; gap: 12px;
          background: #1b1f24; color: #e6e6e6; font-family: system-ui, sans-serif; }
   h1 { margin: 0; font-size: 28px; letter-spacing: 2px; }
   #info { display: flex; gap: 24px; font-size: 18px; align-items: center; }
   #sound { background: #3a4250; border: none; border-radius: 6px; font-size: 16px;
            padding: 4px 10px; cursor: pointer; }
-  canvas { background: #0f1317; border: 3px solid #3a4250; border-radius: 6px; }
-  #msg { font-size: 15px; color: #9aa4b2; height: 20px; }
+  canvas { background: #0f1317; border: 3px solid #3a4250; border-radius: 6px;
+           display: block; touch-action: none; }
+  #msg { font-size: 15px; color: #9aa4b2; min-height: 20px; text-align: center; }
   #pad { display: none; gap: 6px; flex-direction: column; align-items: center; }
   #pad button { width: 56px; height: 56px; font-size: 22px; border-radius: 10px;
                 border: none; background: #3a4250; color: #fff; }
   @media (pointer: coarse) { #pad { display: flex; } }
+  @media (max-height: 520px) {            /* short screens, e.g. phone in landscape */
+    h1 { font-size: 20px; }
+    #info { font-size: 15px; }
+    #msg { font-size: 13px; }
+    #pad button { width: 44px; height: 44px; font-size: 18px; }
+  }
+  /* phone held sideways: drop the title and move the arrow pad beside the board */
+  @media (pointer: coarse) and (orientation: landscape) {
+    h1 { display: none; }
+    #pad { position: fixed; right: 16px; bottom: 16px; }
+  }
 </style>
 </head>
 <body>
   <h1>🐍 SNAKE</h1>
   <div id="info"><span>Score: <b id="score">0</b></span><span>Best: <b id="best">0</b></span>
        <button id="sound" title="Sound on/off (M)">🔊</button></div>
-  <canvas id="board" width="400" height="400"></canvas>
+  <canvas id="board"></canvas>
   <div id="msg">Press an arrow key (or WASD) to start · Space to pause · M to mute</div>
   <div id="pad">
     <button data-d="up">▲</button>
@@ -52,7 +66,40 @@ HTML = r"""<!DOCTYPE html>
 <script>
 const canvas = document.getElementById("board");
 const ctx = canvas.getContext("2d");
-const CELL = 20, GRID = canvas.width / CELL;
+const GRID = 20;                 // board is always 20 x 20 squares
+let CELL = 20, BOARD = 400;      // square size / board size in CSS pixels (set by fitBoard)
+
+// ---------- Fit the board to the screen ----------
+function fitBoard() {
+  const body = document.body, cs = getComputedStyle(body);
+  const gap = parseFloat(cs.rowGap) || 0;
+  const padY = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  const padX = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+  const border = 6;                                   // 3px border on each side
+  // height used by everything except the board
+  let used = 0, visible = 0;
+  for (const el of body.children) {
+    if (el === canvas || el.tagName === "SCRIPT") continue;
+    const st = getComputedStyle(el);
+    if (st.display === "none" || st.position === "fixed") continue;
+    used += el.getBoundingClientRect().height; visible++;
+  }
+  used += gap * visible;                              // gaps between items and the board
+  const availH = window.innerHeight - padY - used - border;
+  const availW = window.innerWidth - padX - border;
+  // largest size that fits, rounded down to whole squares so the grid stays crisp
+  CELL = Math.max(8, Math.floor(Math.min(availW, availH, 1000) / GRID));
+  BOARD = CELL * GRID;
+  const dpr = window.devicePixelRatio || 1;           // sharp on Retina screens
+  canvas.style.width = canvas.style.height = BOARD + "px";
+  canvas.width = canvas.height = Math.round(BOARD * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (snake) draw();
+}
+let resizeTimer;
+window.addEventListener("resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(fitBoard, 80); });
+window.addEventListener("orientationchange", () => setTimeout(fitBoard, 200));
+// ---------------------------------------------------
 const DIRS = { up: [0,-1], down: [0,1], left: [-1,0], right: [1,0] };
 const KEYS = { ArrowUp:"up", ArrowDown:"down", ArrowLeft:"left", ArrowRight:"right",
                w:"up", s:"down", a:"left", d:"right", W:"up", S:"down", A:"left", D:"right" };
@@ -161,7 +208,7 @@ function gameOver() {
 }
 
 function draw() {
-  ctx.fillStyle = "#0f1317"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#0f1317"; ctx.fillRect(0, 0, BOARD, BOARD);
   ctx.fillStyle = "#e5534b";                       // food
   ctx.beginPath();
   ctx.arc(food.x*CELL + CELL/2, food.y*CELL + CELL/2, CELL/2 - 2, 0, Math.PI*2);
@@ -171,9 +218,10 @@ function draw() {
     ctx.fillRect(s.x*CELL + 1, s.y*CELL + 1, CELL - 2, CELL - 2);
   });
   if (over) {
-    ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#fff"; ctx.font = "bold 32px system-ui"; ctx.textAlign = "center";
-    ctx.fillText("GAME OVER", canvas.width/2, canvas.height/2);
+    ctx.fillStyle = "rgba(0,0,0,0.55)"; ctx.fillRect(0, 0, BOARD, BOARD);
+    ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(BOARD / 12) + "px system-ui";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("GAME OVER", BOARD/2, BOARD/2);
   }
 }
 
@@ -193,6 +241,21 @@ document.addEventListener("keydown", e => {
 document.querySelectorAll("#pad button").forEach(b =>
   b.addEventListener("click", () => setDir(b.dataset.d)));
 
+// Swipe on the board to steer (phones / tablets)
+let touchStart = null;
+canvas.addEventListener("touchstart", e => {
+  const t = e.changedTouches[0]; touchStart = { x: t.clientX, y: t.clientY };
+}, { passive: true });
+canvas.addEventListener("touchend", e => {
+  if (!touchStart) return;
+  const t = e.changedTouches[0];
+  const dx = t.clientX - touchStart.x, dy = t.clientY - touchStart.y;
+  touchStart = null;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) < 20) return;   // ignore taps
+  setDir(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up"));
+}, { passive: true });
+
+fitBoard();
 reset();
 </script>
 </body>
